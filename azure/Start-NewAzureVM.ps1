@@ -11,15 +11,15 @@ function Get-AzureRmVMImageInfos(){
       [string]
       $OfferName = 'windows'
     )
-    Select-AzureRmProfile –Path $RmProfilePath -ErrorAction Stop
+    Select-AzureRmProfile â€“Path $RmProfilePath -ErrorAction Stop
     $Location = Get-AzureRmLocation | Where-Object {$_.Location -eq $LocationName}
 	If(-not($Location)) { Throw "The location does not exist." }
     $PublisherName = '*'+$PublisherName+'*'
     $OfferName='*'+$OfferName+'*'
-    $lstPublishers = Get-AzureRMVMImagePublisher -Location $LocationName | Where-object { $_.PublisherName –like $PublisherName }
+    $lstPublishers = Get-AzureRMVMImagePublisher -Location $LocationName | Where-object { $_.PublisherName â€“like $PublisherName }
     ForEach ($pub in $lstPublishers) {
        #Get the offers
-       $lstOffers = Get-AzureRMVMImageOffer -Location $LocationName -PublisherName $pub.PublisherName  | Where-object { $_.Offer –like $OfferName }
+       $lstOffers = Get-AzureRMVMImageOffer -Location $LocationName -PublisherName $pub.PublisherName  | Where-object { $_.Offer â€“like $OfferName }
        ForEach ($off in $lstOffers) {
          Get-AzureRMVMImageSku -Location $LocationName -PublisherName $pub.PublisherName -Offer $off.Offer | Format-Table -Auto
 	   }
@@ -30,13 +30,13 @@ function Get-AzureRmVMImageInfos(){
 function Check-AzureRmLocation(){
     param
     (
-	  [string]
-	  $LocationName =$(throw "Parameter missing: -LocationName LocationName")
+	  [Parameter(Mandatory=$true)]
+	  [string]$LocationName
     )
-     Write-Host "Check location $LocationName" -ForegroundColor Green
+     Write-Verbose "Check location $LocationName"
      $Location = Get-AzureRmLocation | Where-Object {$_.Location -eq $LocationName}
 	 If(-not($Location)) {
-       Write-Host "The location" $LocationName "does not exist." -ForegroundColor Red
+       Write-Verbose "The location" $LocationName "does not exist."
        return $false
      }
      Else{
@@ -48,17 +48,17 @@ function Check-AzureRmLocation(){
 function Check-AzureRmResourceGroup(){
      param
     (
-      [string]
-	  $ResourceGroupName =$(throw "Parameter missing: -ResourceGroupName ResourceGroupName"),
-	  [string]
-	  $LocationName =$(throw "Parameter missing: -LocationName LocationName")
+	  [Parameter(Mandatory=$true)]
+      [string]$ResourceGroupName,
+	  [Parameter(Mandatory=$true)]
+	  [string]$LocationName
     )
-     Write-Host "Check resource group $ResourceGroupName, if not, created it." -ForegroundColor Green
+     Write-Verbose "Check resource group $ResourceGroupName, if not, created it." -ForegroundColor Green
      Try
      {
          $ResourceGroup = Get-AzureRmResourceGroup -Name $ResourceGroupName -Location $LocationName -ErrorAction Stop
 	     If(-not($ResourceGroup)) {
-             Write-Host "Creating resource group" $ResourceGroupName "..." -ForegroundColor Green
+             Write-Verbose "Creating resource group" $ResourceGroupName "..." -ForegroundColor Green
              New-AzureRmResourceGroup -Name $ResourceGroupName -Location $LocationName  -ErrorAction Stop
              return $true
          }
@@ -68,7 +68,7 @@ function Check-AzureRmResourceGroup(){
     }
     Catch
     {
-        Write-Host -ForegroundColor Red "Create resource group" $LocationName "failed." $_.Exception.Message
+        Write-Verbose -ForegroundColor Red "Create resource group" $LocationName "failed." $_.Exception.Message
         return $false
     }
 }
@@ -94,14 +94,14 @@ function AutoGenerate-AzureRmStorageAccount(){
           $IsAvailability =Get-AzureRmStorageAccountNameAvailability -Name $StorageAccountName -ErrorAction Stop
           If($IsAvailability)
           {
-             Write-Host "Auto generate store account $StorageAccountName" -ForegroundColor Green
+             Write-Verbose "Auto generate store account $StorageAccountName" -ForegroundColor Green
              $StorageAcc = New-AzureRmStorageAccount -ResourceGroupName $ResourceGroupName -Name $StorageAccountName -SkuName "Standard_LRS" -Kind "Storage" -Location $LocationName  -ErrorAction Stop
              return $StorageAcc.PrimaryEndpoints.Blob.ToString()
           }
         }
         Catch
         {
-          Write-Host -ForegroundColor Red "Auto generate storage account failed" $_.Exception.Message
+          Write-Verbose -ForegroundColor Red "Auto generate storage account failed" $_.Exception.Message
           return $false
         }
     }
@@ -127,7 +127,7 @@ function AutoGenerate-AzureRmNetworkInterface(){
           $IpName = $VMName+"-ip"+$RandomNum
           $NicName = $VMName+"-ni"+$RandomNum
 
-          Write-Host "Auto generate network interface $NicName" -ForegroundColor Green
+          Write-Verbose "Auto generate network interface $NicName" -ForegroundColor Green
           
           $Subnet = New-AzureRmVirtualNetworkSubnetConfig -Name $SubnetName -AddressPrefix 10.0.0.0/24 -ErrorAction Stop     
           $Vnet = New-AzureRmVirtualNetwork -Name $VnetName -ResourceGroupName $ResourceGroupName -Location $LocationName -AddressPrefix 10.0.0.0/16 -Subnet $Subnet -ErrorAction Stop        
@@ -140,7 +140,7 @@ function AutoGenerate-AzureRmNetworkInterface(){
     }
     Catch
     {
-          Write-Host -ForegroundColor Red "Auto generate network interface" $_.Exception.Message
+          Write-Verbose -ForegroundColor Red "Auto generate network interface" $_.Exception.Message
           return $false
     }
 }
@@ -165,32 +165,29 @@ function New-AzureVMByRM(){
       [string] $OfferName = 'Windows',
       [Parameter(Mandatory=$false)]
       [string] $SkusName = '10-Enterprise-N',
-      [string]
-      $UserName = 'frank',
-      [string]
-      $Password = 'Frank@12345678'
-
+      [Parameter(Mandatory=$true)]
+      [PSCrecdential] $PsCred
     )
    
     Try
     {     
-       Write-Host "Login Azure by profile" -ForegroundColor Green   
-       Select-AzureRmProfile –Path $RmProfilePath -ErrorAction Stop
+       Write-Verbose "Login Azure by profile" -ForegroundColor Green   
+       Select-AzureRmProfile â€“Path $RmProfilePath -ErrorAction Stop
 
        #2. Check location
        if(Check-AzureRmLocation -LocationName $LocationName){
           #3. Check resource group, if not, created it.
           if(Check-AzureRmResourceGroup -LocationName $LocationName -ResourceGroupName $ResourceGroupName){
              #4. Check VM images  
-             Write-Host "Check VM images $SkusName" -ForegroundColor Green    
+             Write-Verbose "Check VM images $SkusName" -ForegroundColor Green    
              If(Get-AzureRMVMImageSku -Location $LocationName -PublisherName $PublisherName -Offer $OfferName -ErrorAction Stop | Where-Object {$_.Skus -eq $SkusName}){
                  #5. Check VM
                  If(Get-AzureRmVM -Name $VMName -ResourceGroupName $ResourceGroupName -ErrorAction Ignore){
-                     Write-Host -ForegroundColor Red "VM $VMName has already exist."
+                     Write-Verbose -ForegroundColor Red "VM $VMName has already exist."
                  }
                  else{
                     #6. Check VM Size
-                    Write-Host "check VM Size $VMSizeName" -ForegroundColor Green  
+                    Write-Verbose "check VM Size $VMSizeName" -ForegroundColor Green  
                     If(Get-AzureRmVMSize -Location $LocationName | Where-Object {$_.Name -eq $VMSizeName})
                     {
                        #7. Create a storage account
@@ -199,7 +196,7 @@ function New-AzureVMByRM(){
                         #8. Create a network interface
                         $Nid = AutoGenerate-AzureRmNetworkInterface -Location $LocationName -ResourceGroupName $ResourceGroupName -VMName $VMName
                         If($Nid){
-                            Write-Host "Creating VM $VMName ..." -ForegroundColor Green 
+                            Write-Verbose "Creating VM $VMName ..." -ForegroundColor Green 
                              
                             #10.Set the administrator account name and password for the virtual machine.
                             $StrPass = ConvertTo-SecureString -String $Password -AsPlainText -Force
@@ -223,19 +220,19 @@ function New-AzureVMByRM(){
 
                             #15. Create a virtual machine
                             New-AzureRmVM -ResourceGroupName $ResourceGroupName -Location $LocationName -VM $VM -ErrorAction Stop
-                            Write-Host "Successfully created a virtual machine $VMName" -ForegroundColor Green  
+                            Write-Verbose "Successfully created a virtual machine $VMName" -ForegroundColor Green  
                         }
                       }
                     }
                     Else
                     {
-                       Write-Host -ForegroundColor Red "VM Size $VMSizeName does nott exist."
+                       Write-Verbose -ForegroundColor Red "VM Size $VMSizeName does nott exist."
                     }
                     
                  }
              }
               Else{
-                 Write-Host -ForegroundColor Red "VM images does not exist."
+                 Write-Verbose -ForegroundColor Red "VM images does not exist."
              }
           }
        }
@@ -243,7 +240,7 @@ function New-AzureVMByRM(){
     }
     Catch
     {
-          Write-Host -ForegroundColor Red "Create a virtual machine $VMName failed" $_.Exception.Message
+          Write-Verbose "Create a virtual machine $VMName failed" $_.Exception.Message
           return $false
     }
 }
@@ -268,4 +265,18 @@ if(!(Get-Module -Name AzureRM))
 $ProfilePath = "D:\git\Profile.json"
 Save-AzureRmProfile -Profile (Add-AzureRmAccount) -Path $ProfilePath
 
-New-AzureVMByRM  -ResourceGroupName $resourceGroup -LocationName $location -VMName $vmName -RmProfilePath $ProfilePath
+function GetUserCredential
+{
+    Write-Verbose "Getting the credential for the user"
+    if(!($Cred))
+    {
+        $PSCredential = Get-Credential
+        return $PSCredential 
+    }
+    else
+    {
+        return $Cred
+    }
+}
+
+New-AzureVMByRM  -ResourceGroupName $resourceGroup -LocationName $location -VMName $vmName -RmProfilePath $ProfilePath -PsCred (GetUserCredential)
