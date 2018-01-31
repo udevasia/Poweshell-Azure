@@ -1,0 +1,116 @@
+# ############################################################
+# Author: Vidas Matelis (http://www.ssas-info.com)
+# This script processes all dimensions and cubes in one specified database. You can limit how many processing commands are executed per batch and parallel.
+# Save this script to the file ProcessSSASDB.ps1. To execute script:
+# PowerShell.exe c:\scripts\ProcessSSASDB.ps1 -ServerName 'Vidas-Lenovo' -DBName 'Adventure Works DW' -ProcessTypeDim ProcessFull -ProcessTypeMG ProcessFull -Transactional Y -Parallel Y -MaxParallel 2 -MaxCmdPerBatch 5 -PrintCmd N
+# -ProcessTypeDim   : ProcessFull | ProcessUpdate. Default ProcessFull
+# -ProcessTypeMG   : ProcessFull | ProcessUpdate. Default ProcessFull
+# -Transactional : Y | N; If value Y, then will do all dimension re-processing in one single transaction. Default value Y
+# -Parallel      : Y | N; If value Y, then will do dimension re-processing in parallel. Default value Y
+# -MaxParallel  : maximum number of threads on which to run commands in parallel. Default 5
+# -MaxCmdPerBatch: maximum number of commands per batch. Default 2
+# -PrintCmd      : Y | N; Default N; If value is Y prints commands before execution. Note errors will be printed out after each printed command and not at the end!
+# Expected values for ProcessType: 'ProcessUpdate','ProcessFull'
+# This script was written and tested on SSAS 2008, but it should also work with SSAS 2005
+# ############################################################
+param($ServerName="localhost", $DBName="Adventure Works DW", $ProcessTypeDim="ProcessFull",$ProcessTypeMG="ProcessFull", $Transactional="Y", $Parallel="Y",$MaxParallel=2,$MaxCmdPerBatch=5, $PrintCmd="N")
+
+## Add the AMO namespace
+$loadInfo = [Reflection.Assembly]::LoadWithPartialName("Microsoft.AnalysisServices")
+
+if ($Transactional -eq "Y") {$TransactionalB=$true} else {$TransactionalB=$false}
+if ($Parallel -eq "Y") {$ParallelB=$true} else {$ParallelB=$false}
+
+$server = New-Object Microsoft.AnalysisServices.Server
+$server.connect($ServerName)
+if ($server.name -eq $null) {
+ Write-Output ("Server '{0}' not found" -f $ServerName)
+ break
+}
+
+$DB = $server.Databases.FindByName($DBName)
+if ($DB -eq $null) {
+ Write-Output ("Database '{0}' not found" -f $DBName)
+ break
+}
+Write-Output("Load start time {0}" -f (Get-Date -uformat "%H:%M:%S") )
+Write-Output("----------------------------------------------------------------")
+Write-Output("Server  : {0}" -f $Server.Name)
+Write-Output("Database: {0}" -f $DB.Name)
+Write-Output("DB State: {0}" -f $DB.State)
+Write-Output("DB Size : {0}MB" -f ($DB.EstimatedSize/1024/1024).ToString("#,##0"))
+Write-Output("----------------------------------------------------------------")
+Write-Output("DB processing started.   Time: {0}" -f (Get-Date -uformat "%H:%M:%S"))
+
+$server.CaptureXml=$TRUE # Just capture server statements, dont execute them
+#Process dimensions
+
+foreach ($dim in $DB.Dimensions) {
+  $dim.Process($ProcessTypeDim)
+} # Dimensions
+
+#Process cubes
+foreach ($cube in $DB.Cubes) {
+ foreach ($mg in $cube.MeasureGroups) {
+  foreach ($part in $mg.Partitions) {
+   $part.Process($ProcessTypeMG)
+  }
+ }
+}
+
+# Separate step to process all linked measure groups. Linke MG does not have partitions
+foreach ($cube in $DB.Cubes) {
+ foreach ($mg in $cube.MeasureGroups) {
+  if ($mg.IsLinked) {
+   $mg.Process($ProcessTypeMG)
+  }
+ }
+}
+ 
+$server.CaptureXML = $FALSE # Finish capturing statements. All statements are in Server.CaptureLog
+
+$cmdBatch = @"
+<Batch xmlns="http://schemas.microsoft.com/analysisservices/2003/engine">
+  <Parallel MaxParallel="##MaxParallel##">
+##ProcessCmd##
+  </Parallel>
+</Batch>
+"@
+$cmdBatch = $cmdBatch -replace("##MaxParallel##",$MaxParallel)
+
+#$ErrorActionPreference = "SilentlyContinue"
+$currentCmdNo=0; $currentCmdInBatchNo=0;
+$processCmd="";$currentBatchNo=0
+$TotalCmdCount = $Server.CaptureLog.Count
+
+foreach ($cmdLine in $Server.CaptureLog) {
+ $currentCmdNo = $currentCmdNo + 1
+ $processCmd = $processCmd + $cmdLine + "`n"
+ $currentCmdInBatchNo=$currentCmdInBatchNo + 1
+ if ($currentCmdInBatchNo -ge $MaxCmdPerBatch -or $currentCmdNo -eq $TotalCmdCount) { #MaxCmdPerBatch reached, execute commands
+  $processCmd = $cmdBatch -replace("##ProcessCmd##", $processCmd) 
+  if ($PrintCmd -eq "Y") { Write-Output($processCmd) }
+  $currentBatchNo = $currentBatchNo + 1;
+  Write-Output("=== Startining batch No {0}. Time: {1} ..." -f $currentBatchNo, (Get-Date -uformat "%H:%M:%S"))
+  $Result = $Server.Execute($processCmd)
+  
+  # Report errors and warnings
+  foreach ($res in $Result) {
+   foreach ($msg in $res.Messages) {
+    if ($msg.Description -ne $null) {Write-Output("{0}" -f $msg.Description)} 
+   }
+  }
+  # Reset temp values
+  $processCmd = ""; $currentCmdInBatchNo=0;
+ }
+}#foreach
+
+Write-Output("----------------------------------------------------------------")
+Write-Output("DB processing completed. Time: {0}" -f (Get-Date -uformat "%H:%M:%S"))
+
+
+Write-Output("----------------------------------------------------------------")
+Write-Output("Listing objects that are not processed")
+
+
+ 
