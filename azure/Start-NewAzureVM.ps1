@@ -11,6 +11,8 @@ function Get-AzureRmVMImageInfos(){
       [Parameter(Mandatory=$false)]
       [string]$OfferName = 'windows'
     )
+
+    [Hashtable]$VMImageInfo = @{}
     Select-AzureRmProfile -Path $RmProfilePath -ErrorAction Stop
     $Location = Get-AzureRmLocation | Where-Object {$_.Location -eq $LocationName}
 	If(-not($Location)) { Throw "The location does not exist." }
@@ -19,11 +21,16 @@ function Get-AzureRmVMImageInfos(){
     $lstPublishers = Get-AzureRMVMImagePublisher -Location $LocationName | Where-object { $_.PublisherName -like $PublisherName }
     ForEach ($pub in $lstPublishers) {
        #Get the offers
+       [Hashtable]$publishers  =@{}
        $lstOffers = Get-AzureRMVMImageOffer -Location $LocationName -PublisherName $pub.PublisherName  | Where-object { $_.Offer -like $OfferName }
        ForEach ($off in $lstOffers) {
-         Get-AzureRMVMImageSku -Location $LocationName -PublisherName $pub.PublisherName -Offer $off.Offer | Format-Table -Auto
+         $skus = Get-AzureRMVMImageSku -Location $LocationName -PublisherName $pub.PublisherName -Offer $off.Offer | Format-Table -Auto
+         $publishers.Add($off.Offer,$skus)
+         $VMImageInfo.Add($pub.PublisherName,$publishers)
 	   }
+        
     }
+    return $VMImageInfo
 }
 
 #Check location 
@@ -53,7 +60,7 @@ function Check-AzureRmResourceGroup(){
 	  [Parameter(Mandatory=$true)]
 	  [string]$LocationName
     )
-     Write-Verbose "Check resource group $ResourceGroupName, if not, created it." -ForegroundColor Green
+     Write-Verbose "Check resource group $ResourceGroupName, if not, created it."
      Try
      {
          $ResourceGroup = Get-AzureRmResourceGroup -Name $ResourceGroupName -Location $LocationName -ErrorAction Stop
@@ -68,8 +75,53 @@ function Check-AzureRmResourceGroup(){
     }
     Catch
     {
-        Write-Verbose -ForegroundColor Red "Create resource group" $LocationName "failed." $_.Exception.Message
+        Write-Verbose "Create resource group" $LocationName "failed." $_.Exception.Message
         return $false
+    }
+}
+
+function Create-SecurityGroups(){
+     param
+    (
+      [Parameter(Mandatory=$true)]
+      [xml] $config,
+      [Parameter(Mandatory=$true)]
+      [string] $ResourceGroupName,
+      [Parameter(Mandatory=$true)]
+	  [string] $LocationName
+    )
+   
+    Try
+    {
+		$SecurityRules = @()
+        $index = 0
+		foreach($securityRule in $config.ResourceGroup.VM.SecurityGroup.securityRule){           
+            $index+=1
+            
+		    $nsgRule = New-AzureRmNetworkSecurityRuleConfig -Name $securityRule.Name `
+                        -Protocol $securityRule.Protocol `
+                        -Direction $securityRule.Direction `
+                        -Priority $securityRule.Priority `
+                        -SourceAddressPrefix $securityRule.SourceAddressPrefix `
+                        -SourcePortRange $securityRule.SourcePortRange `
+                        -DestinationAddressPrefix $securityRule.DestinationAddressPrefix `
+                        -DestinationPortRange $securityRule.DestinationPortRange `
+                        -Access $securityRule.Access
+            $SecurityRules.Add($nsgRule)
+                        
+		}       
+        $nsg = New-AzureRmNetworkSecurityGroup `
+            -ResourceGroupName $ResourceGroupName `
+            -Location $LocationName `
+            -Name $config.ResourceGroup.VM.SecurityGroup.Name `
+            -SecurityRules $SecurityRules 
+
+        return $nsg
+    }
+    Catch
+    {
+          Write-Verbose "create security groups: " $_.Exception.Message
+          return $false
     }
 }
 
@@ -98,9 +150,12 @@ function AutoGenerate-AzureRmNetworkInterface(){
                
           $Vnet = New-AzureRmVirtualNetwork -Name $VnetName -ResourceGroupName $ResourceGroupName -Location $LocationName -AddressPrefix 10.0.0.0/16 -Subnet $Subnet -ErrorAction Stop        
          
-          $Pip = New-AzureRmPublicIpAddress -Name $IpName -ResourceGroupName $ResourceGroupName -Location $LocationName -AllocationMethod Dynamic -ErrorAction Stop       
+          $Pip = New-AzureRmPublicIpAddress -Name $IpName -ResourceGroupName $ResourceGroupName -Location $LocationName -AllocationMethod Dynamic -ErrorAction Stop 
+         
+          #7. Create Security groups
+          $nsg  = Create-SecurityGroups -config $Global:config -Location $LocationName -ResourceGroupName $ResourceGroupName            
           
-          $Nic = New-AzureRmNetworkInterface -Name $NicName -ResourceGroupName $ResourceGroupName -Location $LocationName -SubnetId $Vnet.Subnets[0].Id -PublicIpAddressId $Pip.Id -ErrorAction Stop
+          $Nic = New-AzureRmNetworkInterface -Name $NicName -ResourceGroupName $ResourceGroupName -Location $LocationName -SubnetId $Vnet.Subnets[0].Id -PublicIpAddressId $Pip.Id -NetworkSecurityGroupId $nsg.Id -ErrorAction Stop
 
           return $Nic.Id
     }
@@ -110,6 +165,7 @@ function AutoGenerate-AzureRmNetworkInterface(){
           return $false
     }
 }
+
 
 #Create a Windows VM using Resource Manager
 function New-AzureVMByRM(){
@@ -155,16 +211,15 @@ function New-AzureVMByRM(){
                     #6. Check VM Size
                     Write-Verbose "check VM Size $VMSizeName" 
                     If(Get-AzureRmVMSize -Location $LocationName | Where-Object {$_.Name -eq $VMSizeName})
-                    {
-                       #7. Create a storage account                     
+                    {                                  
                         #8. Create a network interface
-                        $Nid = AutoGenerate-AzureRmNetworkInterface -Location $LocationName -ResourceGroupName $ResourceGroupName -VMName $VMName
+                        $Nid = AutoGenerate-AzureRmNetworkInterface -Location $LocationName -ResourceGroupName $ResourceGroupName -VMName $VMName 
                         If($Nid){
-                            Write-Verbose "Creating VM $VMName ..." -ForegroundColor Green 
+                            Write-Verbose "Creating VM $VMName ..."
 							
                             #11.Choose virtual machine size, set computername and credential
                             $VM = New-AzureRmVMConfig -VMName $VMName -VMSize $VMSizeName -ErrorAction Stop
-                            $VM = Set-AzureRmVMOperatingSystem -VM $VM -Windows -ComputerName $VMName -Credential $Cred -ProvisionVMAgent -EnableAutoUpdate -ErrorAction Stop
+                            $VM = Set-AzureRmVMOperatingSystem -VM $VM -Windows -ComputerName $VMName -Credential $PsCred -ProvisionVMAgent -EnableAutoUpdate -ErrorAction Stop
                            
                             #12.Choose source image
                             $VM = Set-AzureRmVMSourceImage -VM $VM -PublisherName $PublisherName -Offer $OfferName -Skus $SkusName -Version "latest" -ErrorAction Stop
@@ -185,13 +240,13 @@ function New-AzureVMByRM(){
                     }
                     Else
                     {
-                       Write-Verbose -ForegroundColor Red "VM Size $VMSizeName does nott exist."
+                       Write-Verbose "VM Size $VMSizeName does nott exist."
                     }
                     
                  }
              }
               Else{
-                 Write-Verbose -ForegroundColor Red "VM images does not exist."
+                 Write-Verbose "VM images does not exist."
              }
           }
        }
@@ -204,11 +259,34 @@ function New-AzureVMByRM(){
     }
 }
 
+function GetUserCredential
+{
+    Write-Verbose "Getting the credential for the user"
+    if(!($Cred))
+    {
+        $Cred = Get-Credential
+        return $Cred 
+    }
+    else
+    {
+        return $Cred
+    }
+}
+
 $Global:Verbosepreference = 'continue'
 # Variables for common values
 $resourceGroup = "myResourceGroup"
 $location = "australiaeast"
 $vmName = "myVM"
+[xml]$Global:config = '<?xml version="1.0" encoding="UTF-8"?>
+<ResourceGroup>
+	<VM Name="VM1">
+		<SecurityGroup Name = "MyNetworkSecurityGroup">
+			<SecurityRule Name="myNetworkSecurityGroupRuleRDP" Protocol="TCP" Direction="Inbound" Priority="1000" SourceAddressPrefix="*" SourcePortRange="*" DestinationAddressPrefix="*" DestinationPortRange="3389" Access="Allow"/>
+			<SecurityRule Name="myNetworkSecurityGroupRuleWWW" Protocol="TCP" Direction="Inbound" Priority="1001" SourceAddressPrefix="*" SourcePortRange="*" DestinationAddressPrefix="*" DestinationPortRange="80" Access="Allow"/>
+		</SecurityGroup>
+	</VM>	
+</ResourceGroup>'
 
 $AZureModuleExists = Get-Module -ListAvailable | where{$_.Name -eq 'AzureRM'}
 if(!($AZureModuleExists))
@@ -224,18 +302,13 @@ if(!(Get-Module -Name AzureRM))
 $ProfilePath = "D:\git\Profile.json"
 Save-AzureRmProfile -Profile (Add-AzureRmAccount) -Path $ProfilePath
 
-function GetUserCredential
-{
-    Write-Verbose "Getting the credential for the user"
-    if(!($Cred))
-    {
-        $Cred = Get-Credential
-        return $Cred 
-    }
-    else
-    {
-        return $Cred
+$AzureVMImageInfos = Get-AzureRmVMImageInfos -RmProfilePath $ProfilePath -LocationName $location
+foreach($pub in $AzureVMImageInfos){
+    foreach($off in $pub){
+        $off.Values
     }
 }
+
+$VMImage = Read-Host "select the sku(Image) name"
 
 New-AzureVMByRM  -ResourceGroupName $resourceGroup -LocationName $location -VMName $vmName -RmProfilePath $ProfilePath -PsCred (GetUserCredential)
