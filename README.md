@@ -16,4 +16,8 @@ Azure Classic to Resource manager migration
 
 https://github.com/Azure/classic-iaas-resourcemanager-migration
 
+Migration Path
+--------------
+
+https://docs.microsoft.com/en-us/azure/virtual-machines/windows/migration-classic-resource-manager-plan
 
