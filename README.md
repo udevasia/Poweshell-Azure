@@ -9,3 +9,11 @@ Deploy SSRS Artifacts using powershell
 ---------------------------------------
 
 https://sqlblogcasts.com/blogs/sqlandthelike/archive/2013/02/12/deploying-ssrs-artefacts-using-powershell-simply.aspx
+
+
+Azure Classic to Resource manager migration
+-------------------------------------------
+
+https://github.com/Azure/classic-iaas-resourcemanager-migration
+
+
