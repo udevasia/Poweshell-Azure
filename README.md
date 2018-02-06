@@ -21,3 +21,7 @@ Migration Path
 
 https://docs.microsoft.com/en-us/azure/virtual-machines/windows/migration-classic-resource-manager-plan
 
+Dev Test Lab
+--------------
+
+https://github.com/Azure/azure-devtestlab
