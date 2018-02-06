@@ -1,0 +1,7 @@
+Get-ScheduledTask | ?{$_.TaskPath -notlike '\MIcrosoft*'} |foreach {
+ 
+Export-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath |
+ 
+Out-File (Join-Path "\\10.3.1.12\F$\MigrationTool\scheduledtasks" "$($_.TaskName).xml")
+ 
+}
