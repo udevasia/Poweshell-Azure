@@ -25,3 +25,8 @@ Dev Test Lab
 --------------
 
 https://github.com/Azure/azure-devtestlab
+
+AZURE ARCHITECTURE
+--------------------
+
+front end and back end server - https://github.com/Microsoft/dotnet-core-sample-templates/blob/master/dotnet-core-music-windows/azuredeploy.json
